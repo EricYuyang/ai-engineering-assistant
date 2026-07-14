@@ -284,3 +284,135 @@ newer `langchain` 1.x rewrite).
   rather than trial-and-error installing.
 - Verified Phase 1's `/chat` endpoint still works after the bump, per the
   project rule of not breaking previous phases when starting a new one.
+
+---
+
+## Phase 3: LangGraph orchestration + memory
+
+### 10. Graph structure — nodes, edges, and state
+
+**Decision:** wrap the chat pipeline in a LangGraph `StateGraph` with four
+nodes: `retrieve`, `generate`, `no_context`, and `extract_facts`. A
+conditional edge after `retrieve` routes to either `generate` (confidence
+above threshold) or `no_context` (below threshold). Plain chat (no
+`project_name`) flows through the same graph — `retrieve` returns empty
+docs and `route` skips straight to `generate`, so one graph handles both
+RAG and non-RAG modes with no separate code paths.
+
+**Why:**
+- Single graph for all modes avoids code duplication and makes the flow
+  visible in one place. The routing guardrail is a conditional edge, not
+  an `if` buried in a helper function — it's declarative and shows up in
+  graph visualization.
+- Node trace (`retrieve(k=6, best=0.553) → generate → extract_facts(2)`)
+  is returned with every response, making the graph's behavior observable
+  for debugging and for demo/interview walkthroughs.
+- The `no_context` node is a hard gate — it returns a canned message
+  instead of letting the model generate with irrelevant context. This is
+  the routing guardrail's whole value: prevent hallucination rather than
+  hoping the model self-corrects.
+
+### 11. Checkpointer choice — SqliteSaver for session persistence
+
+**Decision:** use `SqliteSaver` (from `langgraph-checkpoint-sqlite`) backed
+by a local `checkpoints.sqlite3` file. This replaces the in-memory
+`_sessions` dict and the `max_history_messages` stopgap from Phase 2.
+
+**Why:**
+- MemorySaver (in-memory) would be identical to what we already had —
+  lost on restart, no improvement.
+- SqliteSaver gives persistence with zero infrastructure: sessions survive
+  server restarts, which is the one meaningful upgrade for a single-user
+  demo. The file sits next to `chroma_db/` in the project folder.
+- PostgresSaver would require running a Postgres server — overkill for
+  this project's scale.
+- The checkpointer is a one-line swap (the graph doesn't know which
+  backend is behind it), so moving to Postgres later is trivial. This is
+  a clean talking point for interviews: same graph, different durability
+  guarantees, zero code changes.
+
+### 12. Long-term memory — separate fact store
+
+**Decision:** extract factual statements from conversations and persist them
+in a separate `facts.sqlite3` database, keyed by `project_name`. Facts are
+injected as a system message during generation in subsequent sessions.
+
+**Why:**
+- The checkpointer handles short-term memory (conversation history within
+  a session, per `thread_id`). Long-term memory (facts that should survive
+  across sessions) is a different concern with a different lifecycle — a
+  fact about "the auth service uses JWT" should be available in every
+  future session about that project, not just the one where it was stated.
+- Storing facts in the same SQLite as the checkpointer would conflate two
+  access patterns: the checkpointer needs fast read/write of full state
+  per thread, while facts need a simple query by project name across all
+  threads.
+- The extraction is done by the LLM itself: the `extract_facts` node asks
+  the model to identify factual statements about the project from the
+  recent conversation and return them as a JSON array. This is deliberately
+  best-effort — a small local model won't catch everything, but even
+  partial extraction is better than none.
+
+### 13. Routing guardrail — confidence threshold and hard gate
+
+**Decision:** use the best retrieval similarity score as a gate. If the
+highest score among all retrieved chunks is below a configurable threshold
+(`CONFIDENCE_THRESHOLD`, default 0.4), route to `no_context` (hard gate)
+instead of `generate`.
+
+**Why:**
+- The score comes from Chroma's `similarity_search_with_relevance_scores`,
+  which we were already calling but not using the score value. No new
+  computation needed.
+- Hard gate (skip generation entirely) rather than soft gate (generate
+  with a disclaimer): the whole point is to prevent hallucination from a
+  small model. A soft gate hopes the model will self-regulate with bad
+  context, which is exactly what small models are worst at.
+- Configurable threshold (env var + config.py) because the "right" value
+  depends on the embedding model, the data, and the query distribution.
+  0.4 is a conservative starting point; real tuning requires observing
+  score distributions on actual queries. The node trace logs the score on
+  every request to make this observable.
+- Plain chat (no `project_name`) bypasses the check entirely — no
+  retrieval was attempted, so there's no score to evaluate, and no
+  grounding claim to protect.
+
+### 14. Streaming from inside the graph
+
+**Decision:** use `graph.astream_events()` (async, version="v2") to stream
+individual LLM tokens from the `generate` node, filtered by
+`event["metadata"]["langgraph_node"] == "generate"`. Also provide a
+`/chat/sync` endpoint using `graph.ainvoke()` for testing and debugging.
+
+**Why:**
+- Phase 1 established streaming as the response shape (talking point: "the
+  difference between 'the API works' and 'the API is usable'"). Losing
+  token-level streaming when wrapping the LLM call in a graph node would
+  be a UX regression.
+- `graph.stream()` only returns full node outputs — the user would wait
+  for the entire response before seeing anything. `astream_events()`
+  exposes inner events including individual LLM token chunks.
+- The `langgraph_node` metadata filter ensures we only yield tokens from
+  `generate`, not from `extract_facts` (which also calls the LLM but
+  whose output is internal).
+- `/chat/sync` exists for debugging and testing — it returns the full
+  result as JSON including response, sources, node trace, and confidence
+  score in one object.
+
+### 15. Dependency version — langgraph on langchain-core 0.3.x
+
+**Decision:** use `langgraph==0.6.11` and `langgraph-checkpoint-sqlite==3.0.3`.
+This is the last `langgraph` line that accepts `langchain-core>=0.1` without
+requiring `>=1.4`. `langgraph` 1.x requires `langchain-core>=1.4.7`, which
+would break `langchain-chroma==0.2.4` and the entire Phase 1+2 dependency
+chain.
+
+**Why:**
+- Same constraint pattern as Decision 9: the `langchain-core` version is
+  the fragile link. Everything else (langchain, langchain-chroma,
+  langchain-ollama) is pinned to `0.3.x` of langchain-core, and upgrading
+  to `1.x` would cascade-break them all.
+- Verified via `pip install --dry-run` before committing to the version —
+  same approach that saved time in Phase 2's dependency resolution.
+- `langgraph 0.6.11` has the full API we need: `StateGraph`, conditional
+  edges, `astream_events(version="v2")`, and the checkpoint interface.

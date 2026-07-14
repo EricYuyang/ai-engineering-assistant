@@ -17,8 +17,13 @@ langchain-chroma==0.2.4
 langchain-text-splitters==0.3.11
 pathspec==0.12.1
 
-# --- Phase 3 (LangGraph orchestration + memory) will add ---
-# langgraph
+# --- Phase 3: LangGraph orchestration + memory ---
+# langgraph 0.6.11 is the last line that accepts langchain-core 0.3.x
+# (1.x requires langchain-core >=1.4, which would break Phase 1+2 deps).
+# langgraph-checkpoint-sqlite provides SqliteSaver for persistent sessions.
+langgraph==0.6.11
+langgraph-checkpoint-sqlite==3.0.3
+aiosqlite==0.22.1
 
 # --- Phase 4 (Guardrails AI) will add ---
 # guardrails-ai

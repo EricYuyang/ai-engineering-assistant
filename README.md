@@ -59,8 +59,8 @@ they answer different questions:
 |---|---|---|
 | 1 | Local LLM chat (FastAPI + LangChain `ChatOllama`, streaming) | Done |
 | 2 | RAG: ingest docs, chunk, embed locally, retrieve, cite sources | **Done** |
-| 3 | LangGraph orchestration + memory (checkpointer + long-term facts) | Next up |
-| 4 | Guardrails AI: structured output validation, auto re-ask | Not started |
+| 3 | LangGraph orchestration + memory (checkpointer + long-term facts) | **Done** |
+| 4 | Guardrails AI: structured output validation, auto re-ask | Next up |
 | Stretch | Multiple selectable knowledge bases | Not started |
 
 ## Setup
@@ -209,3 +209,65 @@ Key constraints:
   specific `langchain-chroma` version (0.2.4) that bridges old
   `langchain-core` 0.3.x with new `chromadb` 1.x — resolved by reading
   PyPI dependency metadata rather than trial-and-error. (DECISIONS.md #9)
+
+## Phase 3 notes
+
+Phase 3 wraps the chat pipeline in a LangGraph `StateGraph`, adds
+persistent session memory via a SqliteSaver checkpointer, and introduces
+a routing guardrail that prevents hallucination when retrieval context
+is poor.
+
+New/changed modules:
+- `app/graph.py` — the StateGraph definition with four nodes: `retrieve`,
+  `generate`, `no_context`, and `extract_facts`. A conditional edge after
+  `retrieve` routes based on retrieval confidence.
+- `app/facts.py` — long-term fact storage in a separate `facts.sqlite3`.
+  Extracted facts are keyed by `project_name` and injected as system
+  messages in future sessions.
+- `app/main.py` — rewritten to use the graph. The `/chat` endpoint is now
+  async and streams tokens via `astream_events()`. A `/chat/sync` endpoint
+  is available for debugging (returns full JSON result).
+
+Three paths through the graph:
+1. **Plain chat** (no `project_name`): `retrieve(skip) → generate` — same
+   as Phase 1 behavior, no retrieval.
+2. **RAG with good context**: `retrieve → generate → extract_facts` —
+   retrieval score above threshold, model generates with context.
+3. **RAG with poor context**: `retrieve → no_context` — score below
+   threshold, hard gate returns "not enough context" instead of
+   hallucinating.
+
+Every response includes a `[nodes: ...]` trace showing which nodes fired
+and the retrieval confidence score — making the graph's behavior
+observable for debugging and demo walkthroughs.
+
+## Talking points for Phase 3
+
+- Why one graph handles both plain chat and RAG: instead of separate code
+  paths, the retrieve node returns empty docs when no `project_name` is
+  set, and the route edge skips straight to generate. This means the
+  graph is the single source of truth for all chat behavior — no risk of
+  the two paths diverging. (DECISIONS.md #10)
+- Why SqliteSaver over MemorySaver or PostgresSaver: MemorySaver is what
+  we already had (lost on restart, no improvement). PostgresSaver needs a
+  running database server (overkill for a demo). SqliteSaver gives
+  persistence with zero infrastructure — and the checkpointer is a
+  one-line swap, so moving to Postgres later requires zero code changes
+  to the graph. (DECISIONS.md #11)
+- Why long-term facts are separate from the checkpointer: the
+  checkpointer owns per-session history (short-term, scoped to a
+  thread_id). Facts own cross-session knowledge (long-term, scoped to a
+  project_name). Different lifecycles, different access patterns, clean
+  separation. This distinction matters: "the app remembers the last few
+  messages" is not the same as "the app has memory." (DECISIONS.md #12)
+- Why a hard gate instead of a soft gate for the routing guardrail: a
+  soft gate (generate with a disclaimer) hopes the model will
+  self-regulate with bad context — exactly what small models are worst
+  at. A hard gate is decisive and predictable: below threshold, no
+  generation, clear message. The threshold is configurable and the score
+  is logged on every request for tuning. (DECISIONS.md #13)
+- Why `astream_events()` over `graph.stream()`: Phase 1 established
+  streaming as the response shape. `graph.stream()` only returns full
+  node outputs — the user would wait for the entire response. We chose
+  the streaming approach that preserved the UX rather than the simpler
+  one that would have regressed it. (DECISIONS.md #14)

@@ -1,10 +1,12 @@
 """
-Phase 1 (plain streaming chat) plus Phase 2 (RAG over an ingested repo).
+Phase 1 (plain streaming chat), Phase 2 (RAG), and Phase 3 (LangGraph
+orchestration + memory).
 
-Phase 1's endpoint shape is unchanged: session_id + message in, streamed
-tokens out. `project_name` is an *optional* addition -- omit it and /chat
-behaves exactly as it did in Phase 1 (no retrieval), so nothing that
-already depended on this endpoint breaks.
+Phase 3 replaces the hand-rolled message assembly and in-memory session
+dict with a LangGraph StateGraph backed by a SqliteSaver checkpointer.
+The /chat endpoint is async; token-level streaming is handled by
+iterating the generate node's LLM output within the graph, then
+yielding the full response plus metadata.
 """
 from __future__ import annotations
 
@@ -12,43 +14,25 @@ import uuid
 
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import StreamingResponse
-from langchain_core.documents import Document
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel
 
 from app.config import settings
-from app.llm import get_chat_model
-from app.manifest import get_project_collections, load_projects
+from app.graph import build_graph
+from app.manifest import load_projects
 from app.pipeline import IngestResult, ingest_repo
-from app.vectorstore import query_project
 
-app = FastAPI(title="AI Engineering Assistant", version="0.1.0")
+app = FastAPI(title="AI Engineering Assistant", version="0.2.0")
 
-llm = get_chat_model()
+_graph_builder = build_graph()
 
-SYSTEM_PROMPT = (
-    "You are an AI Engineering Assistant that helps developers understand "
-    "software projects. When retrieved context from a codebase is provided, "
-    "ground your answer in it and cite file paths; if the context doesn't "
-    "contain the answer, say so rather than guessing."
-)
-
-# Phase 1 has no persistent memory system (that arrives in Phase 3 via
-# LangGraph checkpointing). This process-local dict is just enough state to
-# hold a conversation while the server is running, keyed by session_id.
-_sessions: dict[str, list[BaseMessage]] = {}
-
-# Ingestion jobs run in the background (DECISIONS.md #7's implication: a
-# repo can take minutes to summarize, so /ingest can't block on it) and are
-# tracked here so a client can poll for completion.
 _ingest_jobs: dict[str, dict] = {}
 
 
 class ChatRequest(BaseModel):
     session_id: str = "default"
     message: str
-    # Scopes retrieval to a project (a named group of one or more ingested
-    # repos, DECISIONS.md #4 extension). Omit for plain Phase 1 chat.
     project_name: str | None = None
 
 
@@ -63,64 +47,76 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-def _build_context_block(docs: list[Document]) -> str:
-    parts = [f"--- {doc.metadata.get('source_file', 'unknown')} ---\n{doc.page_content}" for doc in docs]
-    return "\n\n".join(parts)
-
-
 @app.post("/chat")
-def chat(req: ChatRequest) -> StreamingResponse:
-    history = _sessions.setdefault(req.session_id, [SystemMessage(content=SYSTEM_PROMPT)])
-    system_message, conversation = history[0], history[1:]
+async def chat(req: ChatRequest) -> StreamingResponse:
+    async def token_stream():
+        async with AsyncSqliteSaver.from_conn_string(settings.checkpoint_db_path) as checkpointer:
+            graph = _graph_builder.compile(checkpointer=checkpointer)
 
-    # Stopgap history cap (DECISIONS.md #6) ahead of Phase 3's proper
-    # checkpointer-based memory -- prevents unbounded history from silently
-    # overflowing the 4096-token budget once retrieved chunks share it.
-    if len(conversation) > settings.max_history_messages:
-        conversation = conversation[-settings.max_history_messages :]
+            config = {"configurable": {"thread_id": req.session_id}}
+            input_state = {
+                "messages": [HumanMessage(content=req.message)],
+                "project_name": req.project_name,
+                "retrieved_docs": [],
+                "best_score": 0.0,
+                "response": "",
+                "sources": [],
+                "node_trace": [],
+            }
 
-    retrieved_docs: list[Document] = []
-    if req.project_name:
-        collections = get_project_collections(req.project_name)
-        if collections:
-            retrieved_docs = query_project(collections, req.message, k=settings.retrieval_top_k)
+            async for event in graph.astream_events(input_state, config=config, version="v2"):
+                kind = event["event"]
 
-    messages: list[BaseMessage] = [system_message]
-    if retrieved_docs:
-        messages.append(
-            SystemMessage(
-                content="Retrieved context from the codebase:\n\n" + _build_context_block(retrieved_docs)
-            )
-        )
-    messages.extend(conversation)
-    messages.append(HumanMessage(content=req.message))
+                if kind == "on_chat_model_stream":
+                    if event.get("metadata", {}).get("langgraph_node") == "generate":
+                        token = event["data"]["chunk"].content or ""
+                        if token:
+                            yield token
 
-    def token_stream():
-        chunks: list[str] = []
-        for chunk in llm.stream(messages):
-            text = chunk.content or ""
-            chunks.append(text)
-            yield text
+                if kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    output = event.get("data", {}).get("output", {})
+                    sources = output.get("sources", [])
+                    node_trace = output.get("node_trace", [])
 
-        history.append(HumanMessage(content=req.message))
-        history.append(AIMessage(content="".join(chunks)))
-
-        if retrieved_docs:
-            sources: list[str] = []
-            for doc in retrieved_docs:
-                source = doc.metadata.get("source_file", "unknown")
-                if source not in sources:
-                    sources.append(source)
-            yield "\n\nSources: " + ", ".join(sources)
+                    if sources:
+                        yield "\n\nSources: " + ", ".join(sources)
+                    if node_trace:
+                        yield f"\n[nodes: {' → '.join(node_trace)}]"
 
     return StreamingResponse(token_stream(), media_type="text/plain")
+
+
+@app.post("/chat/sync")
+async def chat_sync(req: ChatRequest) -> dict:
+    """Non-streaming fallback — useful for testing and debugging."""
+    async with AsyncSqliteSaver.from_conn_string(settings.checkpoint_db_path) as checkpointer:
+        graph = _graph_builder.compile(checkpointer=checkpointer)
+
+        config = {"configurable": {"thread_id": req.session_id}}
+        input_state = {
+            "messages": [HumanMessage(content=req.message)],
+            "project_name": req.project_name,
+            "retrieved_docs": [],
+            "best_score": 0.0,
+            "response": "",
+            "sources": [],
+            "node_trace": [],
+        }
+
+        result = await graph.ainvoke(input_state, config=config)
+        return {
+            "response": result["response"],
+            "sources": result["sources"],
+            "node_trace": result["node_trace"],
+            "best_score": result["best_score"],
+        }
 
 
 def _run_ingest_job(job_id: str, source: str, project_name: str | None, force: bool) -> None:
     try:
         result: IngestResult = ingest_repo(source, project_name=project_name, force=force)
         _ingest_jobs[job_id] = {"status": "done", "result": result.__dict__}
-    except Exception as exc:  # surfaced to the poller rather than crashing the background task silently
+    except Exception as exc:
         _ingest_jobs[job_id] = {"status": "error", "error": str(exc)}
 
 

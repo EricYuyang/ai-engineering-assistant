@@ -52,5 +52,10 @@ class Settings:
     # Stopgap history cap ahead of Phase 3's proper memory system (Decision 6).
     max_history_messages: int = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))
 
+    # --- Phase 3: LangGraph orchestration + memory ---
+    checkpoint_db_path: str = os.getenv("CHECKPOINT_DB_PATH", "checkpoints.sqlite3")
+    facts_db_path: str = os.getenv("FACTS_DB_PATH", "facts.sqlite3")
+    confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.4"))
+
 
 settings = Settings()

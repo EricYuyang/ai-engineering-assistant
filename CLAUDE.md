@@ -23,8 +23,8 @@ checkpointer memory), Guardrails AI (structured output validation).
 |---|---|---|
 | 1 | Local LLM chat (FastAPI + LangChain `ChatOllama`, streaming) | **Done** |
 | 2 | RAG: ingest docs, chunk, embed locally, retrieve, cite sources | **Done** |
-| 3 | LangGraph orchestration + memory (checkpointer + long-term facts) | Next up |
-| 4 | Guardrails AI: structured output validation, auto re-ask | Not started |
+| 3 | LangGraph orchestration + memory (checkpointer + long-term facts) | **Done** |
+| 4 | Guardrails AI: structured output validation, auto re-ask | Next up |
 | Stretch | Multiple selectable knowledge bases | Not started |
 
 Update this table (and the matching one in README.md) whenever a phase is
@@ -52,6 +52,13 @@ completed — that's the persistent record of progress across sessions.
   absorbs the latency.
 - Project grouping is an application-layer manifest (`data/projects.json`),
   not a Chroma feature — multi-repo querying merges results at query time.
+- Phase 3: `app/graph.py` owns the LangGraph StateGraph — all chat logic
+  flows through the graph, no separate code paths for plain vs. RAG chat.
+- Two memory systems are kept separate: `checkpoints.sqlite3` (short-term,
+  per-session via LangGraph checkpointer) and `facts.sqlite3` (long-term,
+  per-project via `app/facts.py`). Don't merge them.
+- The routing guardrail is a conditional edge in the graph, not an `if`
+  in a helper. Its threshold is configurable via `CONFIDENCE_THRESHOLD`.
 
 ## When starting a new phase
 
