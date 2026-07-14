@@ -1,12 +1,12 @@
 """
-Phase 1 (plain streaming chat), Phase 2 (RAG), and Phase 3 (LangGraph
-orchestration + memory).
+Phase 1 (plain streaming chat), Phase 2 (RAG), Phase 3 (LangGraph
+orchestration + memory), and Phase 4 (Guardrails: output validation).
 
-Phase 3 replaces the hand-rolled message assembly and in-memory session
-dict with a LangGraph StateGraph backed by a SqliteSaver checkpointer.
-The /chat endpoint is async; token-level streaming is handled by
-iterating the generate node's LLM output within the graph, then
-yielding the full response plus metadata.
+The /chat endpoint streams tokens from the generate node, then shows
+a "Validating..." indicator while the validate node runs. If validation
+replaces the response (structured re-ask succeeded), the new response
+is appended. The final output includes validation status in the node
+trace so the user can see what the graph did.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from app.graph import build_graph
 from app.manifest import load_projects
 from app.pipeline import IngestResult, ingest_repo
 
-app = FastAPI(title="AI Engineering Assistant", version="0.2.0")
+app = FastAPI(title="AI Engineering Assistant", version="0.4.0")
 
 _graph_builder = build_graph()
 
@@ -47,6 +47,19 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def _make_input_state(req: ChatRequest) -> dict:
+    return {
+        "messages": [HumanMessage(content=req.message)],
+        "project_name": req.project_name,
+        "retrieved_docs": [],
+        "best_score": 0.0,
+        "response": "",
+        "sources": [],
+        "node_trace": [],
+        "validation_status": "",
+    }
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest) -> StreamingResponse:
     async def token_stream():
@@ -54,29 +67,43 @@ async def chat(req: ChatRequest) -> StreamingResponse:
             graph = _graph_builder.compile(checkpointer=checkpointer)
 
             config = {"configurable": {"thread_id": req.session_id}}
-            input_state = {
-                "messages": [HumanMessage(content=req.message)],
-                "project_name": req.project_name,
-                "retrieved_docs": [],
-                "best_score": 0.0,
-                "response": "",
-                "sources": [],
-                "node_trace": [],
-            }
+            input_state = _make_input_state(req)
+
+            validate_started = False
+            original_response = ""
 
             async for event in graph.astream_events(input_state, config=config, version="v2"):
                 kind = event["event"]
+                node = event.get("metadata", {}).get("langgraph_node", "")
 
-                if kind == "on_chat_model_stream":
-                    if event.get("metadata", {}).get("langgraph_node") == "generate":
-                        token = event["data"]["chunk"].content or ""
-                        if token:
-                            yield token
+                if kind == "on_chat_model_stream" and node == "generate":
+                    token = event["data"]["chunk"].content or ""
+                    if token:
+                        original_response += token
+                        yield token
+
+                if kind == "on_chain_start" and event.get("name") == "validate":
+                    if req.project_name:
+                        validate_started = True
+                        yield "\n\n⏳ Validating..."
 
                 if kind == "on_chain_end" and event.get("name") == "LangGraph":
                     output = event.get("data", {}).get("output", {})
                     sources = output.get("sources", [])
                     node_trace = output.get("node_trace", [])
+                    validation_status = output.get("validation_status", "")
+                    final_response = output.get("response", "")
+
+                    if validate_started:
+                        if validation_status == "structured-reask":
+                            yield f" ✓ Re-validated"
+                            yield f"\n\n{final_response}"
+                        elif validation_status in ("structured", "plaintext-valid"):
+                            yield " ✓ Validated"
+                        elif validation_status == "unverified":
+                            yield " ⚠ Could not verify citations"
+                        elif validation_status == "skip":
+                            pass
 
                     if sources:
                         yield "\n\nSources: " + ", ".join(sources)
@@ -93,15 +120,7 @@ async def chat_sync(req: ChatRequest) -> dict:
         graph = _graph_builder.compile(checkpointer=checkpointer)
 
         config = {"configurable": {"thread_id": req.session_id}}
-        input_state = {
-            "messages": [HumanMessage(content=req.message)],
-            "project_name": req.project_name,
-            "retrieved_docs": [],
-            "best_score": 0.0,
-            "response": "",
-            "sources": [],
-            "node_trace": [],
-        }
+        input_state = _make_input_state(req)
 
         result = await graph.ainvoke(input_state, config=config)
         return {
@@ -109,6 +128,7 @@ async def chat_sync(req: ChatRequest) -> dict:
             "sources": result["sources"],
             "node_trace": result["node_trace"],
             "best_score": result["best_score"],
+            "validation_status": result.get("validation_status", ""),
         }
 
 

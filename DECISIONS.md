@@ -416,3 +416,91 @@ chain.
   same approach that saved time in Phase 2's dependency resolution.
 - `langgraph 0.6.11` has the full API we need: `StateGraph`, conditional
   edges, `astream_events(version="v2")`, and the checkpoint interface.
+
+---
+
+## Phase 4: Guardrails AI — structured output validation
+
+### 16. Why manual implementation instead of the guardrails-ai package
+
+**Decision:** implement the Guardrails AI pattern (Pydantic schema validation
++ auto re-ask with error context) manually using plain Pydantic and custom
+retry logic, rather than installing the `guardrails-ai` package.
+
+**Why:**
+- Two hard incompatibilities with the package:
+  1. `guardrails-ai` requires `langchain-core>=1.0.0`. Our entire stack
+     (Phases 1–3) is pinned to `langchain-core 0.3.x` — upgrading would
+     cascade-break `langchain-chroma`, `langchain-ollama`, and `langgraph`.
+     Same fragile link identified in Decisions 9 and 15.
+  2. `guardrails-ai` pulls in `litellm`, which requires Rust/Cargo to
+     compile native extensions. A toolchain install that's invasive,
+     platform-specific, and unrelated to what we're actually building.
+- The pattern itself is simple enough to reimplement: validate output →
+  on failure, re-prompt with the error → retry up to N times. The value
+  is in *demonstrating the pattern*, not in having the library do it.
+- Interview talking point: "I evaluated the framework, hit two blocking
+  incompatibilities, decided the pattern was simple enough to implement
+  directly, and got the same behavior with zero new dependencies."
+
+### 17. Tiered validation strategy (structured → plain-text fallback)
+
+**Decision:** two-tier validation with a cost-aware check order:
+1. Try to parse the existing response as structured JSON (free, no LLM call)
+2. If not JSON, check plain-text for source citations (free, no LLM call)
+3. Only if both fail, re-ask the LLM with a structured JSON prompt (expensive,
+   up to `GUARDRAILS_MAX_RETRIES` attempts)
+
+**Why:**
+- Small models (3B parameters) are inconsistent at producing valid JSON.
+  Forcing structured output every time would burn re-ask retries on
+  formatting failures rather than content quality issues.
+- The cost-aware order avoids unnecessary LLM calls: most responses from
+  the generate node already cite source files in natural language, so the
+  cheap plain-text check usually passes without any re-ask.
+- If the response has no citations at all, the structured re-ask gives
+  the model explicit instructions and error feedback, which is the
+  Guardrails AI re-ask pattern in action.
+- Keeps two distinct guardrail patterns visible (as the README calls out):
+  the routing guardrail (pre-generation, Decision 13) and this output
+  validation (post-generation). Different questions, different places.
+
+### 18. Validate node placement in the graph
+
+**Decision:** add a `validate` node between `generate` and `extract_facts`.
+The graph edge changes from `generate → extract_facts` to
+`generate → validate → extract_facts`.
+
+**Why:**
+- Validation must happen after generation (it needs the response to check)
+  and before fact extraction (if validation replaces the response with a
+  structured re-ask result, fact extraction should operate on the final
+  validated response, not the original).
+- Validation is skipped for plain chat (no RAG context = nothing to
+  validate against), keeping the non-RAG path fast.
+- The node updates `validation_status` in state, which is visible in the
+  node trace — e.g., `validate(plaintext:citations-found)` or
+  `validate(structured:fail(attempt=1),structured:fail(attempt=2),fallback:citations-missing)`.
+
+### 19. Streaming UX — "thinking mode" validation indicator
+
+**Decision:** stream tokens in real time, then show a "Validating..."
+indicator while the validate node runs, followed by the result status.
+
+Flow:
+1. Tokens from `generate` stream to the client as they're produced
+2. After generation completes: `⏳ Validating...`
+3. Validation runs (cheap checks, potentially expensive re-ask)
+4. Result: `✓ Validated` / `✓ Re-validated` / `⚠ Could not verify citations`
+
+If validation re-asks successfully, the new structured response is appended.
+
+**Why:**
+- User's idea (not mine): "make it like thinking mode — stream the
+  response, then add a Validating... after that." Smart UX instinct: the
+  user sees the answer forming immediately (low perceived latency), then
+  gets a confidence indicator as a visual cue.
+- The alternative (wait for validation before showing anything) would
+  regress the streaming UX that Phase 1 established and Phase 3 preserved.
+- In the sync endpoint, `validation_status` is returned in the JSON
+  response for programmatic consumption.

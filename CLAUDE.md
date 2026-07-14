@@ -24,7 +24,7 @@ checkpointer memory), Guardrails AI (structured output validation).
 | 1 | Local LLM chat (FastAPI + LangChain `ChatOllama`, streaming) | **Done** |
 | 2 | RAG: ingest docs, chunk, embed locally, retrieve, cite sources | **Done** |
 | 3 | LangGraph orchestration + memory (checkpointer + long-term facts) | **Done** |
-| 4 | Guardrails AI: structured output validation, auto re-ask | Next up |
+| 4 | Guardrails AI: structured output validation, auto re-ask | **Done** |
 | Stretch | Multiple selectable knowledge bases | Not started |
 
 Update this table (and the matching one in README.md) whenever a phase is
@@ -59,6 +59,13 @@ completed — that's the persistent record of progress across sessions.
   per-project via `app/facts.py`). Don't merge them.
 - The routing guardrail is a conditional edge in the graph, not an `if`
   in a helper. Its threshold is configurable via `CONFIDENCE_THRESHOLD`.
+- Phase 4: `app/validate.py` owns the Pydantic schema and validation logic;
+  the `validate` node in `app/graph.py` wires it into the graph between
+  `generate` and `extract_facts`. Don't put validation logic directly in
+  graph.py or main.py — keep it in validate.py for testability.
+- The validate node uses a cost-aware check order: free checks (parse
+  existing JSON, check plain-text citations) before expensive LLM re-asks.
+  Max retries are configurable via `GUARDRAILS_MAX_RETRIES`.
 
 ## When starting a new phase
 

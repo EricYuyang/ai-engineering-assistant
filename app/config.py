@@ -57,5 +57,8 @@ class Settings:
     facts_db_path: str = os.getenv("FACTS_DB_PATH", "facts.sqlite3")
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.4"))
 
+    # --- Phase 4: Guardrails AI (structured output validation) ---
+    guardrails_max_retries: int = int(os.getenv("GUARDRAILS_MAX_RETRIES", "3"))
+
 
 settings = Settings()

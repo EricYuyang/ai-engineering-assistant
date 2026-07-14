@@ -60,7 +60,7 @@ they answer different questions:
 | 1 | Local LLM chat (FastAPI + LangChain `ChatOllama`, streaming) | Done |
 | 2 | RAG: ingest docs, chunk, embed locally, retrieve, cite sources | **Done** |
 | 3 | LangGraph orchestration + memory (checkpointer + long-term facts) | **Done** |
-| 4 | Guardrails AI: structured output validation, auto re-ask | Next up |
+| 4 | Guardrails AI: structured output validation, auto re-ask | **Done** |
 | Stretch | Multiple selectable knowledge bases | Not started |
 
 ## Setup
@@ -271,3 +271,55 @@ observable for debugging and demo walkthroughs.
   node outputs — the user would wait for the entire response. We chose
   the streaming approach that preserved the UX rather than the simpler
   one that would have regressed it. (DECISIONS.md #14)
+
+## Phase 4 notes
+
+Phase 4 adds post-generation output validation — the Guardrails AI pattern
+(validate → re-ask with error context) implemented manually because the
+`guardrails-ai` package is incompatible with our dependency stack.
+
+New/changed modules:
+- `app/validate.py` — Pydantic `ChatResponse` schema (answer + sources),
+  structured JSON parsing with `try_parse_structured()`, plain-text
+  citation checking with `check_source_citations()`, and the two-tier
+  validation flow: `validate_structured()` (Tier 1: JSON re-ask) and
+  `validate_plaintext()` (Tier 2: citation check).
+- `app/graph.py` — new `validate` node wired between `generate` and
+  `extract_facts`. Runs a cost-aware check order: parse existing response
+  as JSON (free) → check citations (free) → structured re-ask (expensive,
+  only if both free checks fail).
+- `app/main.py` — streaming endpoint now shows `⏳ Validating...` after
+  tokens finish, followed by `✓ Validated` / `✓ Re-validated` /
+  `⚠ Could not verify citations`. Sync endpoint returns `validation_status`.
+
+Updated graph paths:
+1. **Plain chat**: `retrieve(skip) → generate → validate(skip) → extract_facts`
+2. **RAG, good context**: `retrieve → generate → validate → extract_facts`
+3. **RAG, poor context**: `retrieve → no_context`
+
+No new dependencies — Phase 4 uses only `pydantic` (already installed).
+
+## Talking points for Phase 4
+
+- Why manual implementation instead of the guardrails-ai package: two hard
+  incompatibilities — `guardrails-ai` requires `langchain-core>=1.0.0`
+  (would cascade-break Phases 1–3) and pulls in `litellm` which needs
+  Rust/Cargo. The pattern itself is simple: validate → re-ask with error
+  context → retry. The value is in demonstrating the pattern, not in
+  having the library do it. (DECISIONS.md #16)
+- Why tiered validation with a cost-aware check order: small models are
+  inconsistent at structured JSON. Most responses already cite sources in
+  natural language, so the cheap plain-text check usually passes. The
+  expensive structured re-ask only fires when the response has no
+  citations at all — avoiding unnecessary LLM calls for formatting
+  failures. (DECISIONS.md #17)
+- Why two distinct guardrail patterns are kept separate: the routing
+  guardrail (pre-generation, Phase 3) asks "do we have enough context?"
+  The output validation (post-generation, Phase 4) asks "did the model
+  cite what it retrieved?" Different questions, different places in the
+  graph, deliberate separation. (DECISIONS.md #17)
+- Why the "thinking mode" streaming UX: tokens stream in real time (low
+  perceived latency), then a validation indicator appears — the user
+  gets both immediate responsiveness and a confidence signal. The
+  alternative (wait for validation before showing anything) would
+  regress the streaming UX established in Phase 1. (DECISIONS.md #19)
