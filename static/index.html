@@ -17,12 +17,13 @@
   }
 
   header {
-    padding: 16px 24px;
+    padding: 12px 24px;
     border-bottom: 1px solid #2a2d35;
     display: flex;
     align-items: center;
     gap: 16px;
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   header h1 {
@@ -31,8 +32,14 @@
     color: #fff;
   }
 
-  .project-select {
+  .header-controls {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .project-select {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -58,6 +65,68 @@
     border-color: #5b8def;
   }
 
+  #ingest-toggle {
+    background: #1a1d27;
+    color: #e0e0e0;
+    border: 1px solid #2a2d35;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  #ingest-toggle:hover { border-color: #5b8def; }
+
+  #ingest-panel {
+    display: none;
+    width: 100%;
+    padding: 12px 0 4px;
+    gap: 8px;
+    align-items: center;
+  }
+
+  #ingest-panel.open { display: flex; }
+
+  #ingest-input {
+    flex: 1;
+    background: #1a1d27;
+    color: #e0e0e0;
+    border: 1px solid #2a2d35;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+
+  #ingest-input:focus { outline: none; border-color: #5b8def; }
+  #ingest-input::placeholder { color: #555; }
+
+  #ingest-btn {
+    background: #16a34a;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+
+  #ingest-btn:hover { background: #15803d; }
+  #ingest-btn:disabled { background: #14532d; cursor: not-allowed; opacity: 0.6; }
+
+  #ingest-status {
+    font-size: 12px;
+    color: #888;
+    padding: 4px 0;
+  }
+
+  #ingest-status.success { color: #4ade80; }
+  #ingest-status.error { color: #f87171; }
+
   #chat-area {
     flex: 1;
     overflow-y: auto;
@@ -73,8 +142,8 @@
     border-radius: 12px;
     line-height: 1.6;
     font-size: 14px;
-    white-space: pre-wrap;
     word-wrap: break-word;
+    overflow-wrap: break-word;
   }
 
   .message.user {
@@ -82,6 +151,7 @@
     background: #2563eb;
     color: #fff;
     border-bottom-right-radius: 4px;
+    white-space: pre-wrap;
   }
 
   .message.assistant {
@@ -90,6 +160,56 @@
     border: 1px solid #2a2d35;
     border-bottom-left-radius: 4px;
   }
+
+  .message.assistant .answer-content p { margin: 0 0 8px; }
+  .message.assistant .answer-content p:last-child { margin-bottom: 0; }
+
+  .message.assistant .answer-content strong { color: #fff; font-weight: 600; }
+
+  .message.assistant .answer-content code {
+    background: #13151d;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
+    font-size: 13px;
+    color: #c9d1d9;
+  }
+
+  .message.assistant .answer-content pre {
+    background: #13151d;
+    border: 1px solid #2a2d35;
+    border-radius: 6px;
+    padding: 12px;
+    margin: 8px 0;
+    overflow-x: auto;
+  }
+
+  .message.assistant .answer-content pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .message.assistant .answer-content ul,
+  .message.assistant .answer-content ol {
+    margin: 6px 0;
+    padding-left: 24px;
+  }
+
+  .message.assistant .answer-content li { margin: 3px 0; }
+
+  .message.assistant .answer-content h1,
+  .message.assistant .answer-content h2,
+  .message.assistant .answer-content h3 {
+    color: #fff;
+    margin: 12px 0 6px;
+  }
+
+  .message.assistant .answer-content h1 { font-size: 18px; }
+  .message.assistant .answer-content h2 { font-size: 16px; }
+  .message.assistant .answer-content h3 { font-size: 15px; }
 
   .message .sources {
     margin-top: 10px;
@@ -115,25 +235,10 @@
     font-weight: 500;
   }
 
-  .validation-badge.valid {
-    background: #16382d;
-    color: #4ade80;
-  }
-
-  .validation-badge.revalidated {
-    background: #382d16;
-    color: #facc15;
-  }
-
-  .validation-badge.unverified {
-    background: #38161d;
-    color: #f87171;
-  }
-
-  .validation-badge.validating {
-    background: #1a2040;
-    color: #60a5fa;
-  }
+  .validation-badge.valid { background: #16382d; color: #4ade80; }
+  .validation-badge.revalidated { background: #382d16; color: #facc15; }
+  .validation-badge.unverified { background: #38161d; color: #f87171; }
+  .validation-badge.validating { background: #1a2040; color: #60a5fa; }
 
   .typing-indicator {
     display: inline-block;
@@ -167,11 +272,7 @@
     max-height: 120px;
   }
 
-  #message-input:focus {
-    outline: none;
-    border-color: #5b8def;
-  }
-
+  #message-input:focus { outline: none; border-color: #5b8def; }
   #message-input::placeholder { color: #555; }
 
   #send-btn {
@@ -200,25 +301,33 @@
   }
 
   .empty-state h2 { font-size: 20px; color: #888; font-weight: 500; }
-  .empty-state p { font-size: 14px; }
+  .empty-state p { font-size: 14px; max-width: 400px; text-align: center; line-height: 1.5; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>AI Engineering Assistant</h1>
-  <div class="project-select">
-    <label for="project">Project:</label>
-    <select id="project">
-      <option value="">None (plain chat)</option>
-    </select>
+  <div class="header-controls">
+    <div class="project-select">
+      <label for="project">Project:</label>
+      <select id="project">
+        <option value="">None (plain chat)</option>
+      </select>
+    </div>
+    <button id="ingest-toggle">+ Ingest Repo</button>
+  </div>
+  <div id="ingest-panel">
+    <input id="ingest-input" type="text" placeholder="GitHub URL or local path (e.g. https://github.com/user/repo)">
+    <button id="ingest-btn">Ingest</button>
+    <div id="ingest-status"></div>
   </div>
 </header>
 
 <div id="chat-area">
   <div class="empty-state">
     <h2>Ask a question</h2>
-    <p>Select a project for RAG-powered answers, or chat without one.</p>
+    <p>Select a project for RAG-powered answers, or click "+ Ingest Repo" to add a new codebase first.</p>
   </div>
 </div>
 
@@ -228,27 +337,178 @@
 </div>
 
 <script>
-const chatArea   = document.getElementById("chat-area");
-const input      = document.getElementById("message-input");
-const sendBtn    = document.getElementById("send-btn");
-const projectSel = document.getElementById("project");
+const chatArea      = document.getElementById("chat-area");
+const input         = document.getElementById("message-input");
+const sendBtn       = document.getElementById("send-btn");
+const projectSel    = document.getElementById("project");
+const ingestToggle  = document.getElementById("ingest-toggle");
+const ingestPanel   = document.getElementById("ingest-panel");
+const ingestInput   = document.getElementById("ingest-input");
+const ingestBtn     = document.getElementById("ingest-btn");
+const ingestStatus  = document.getElementById("ingest-status");
 
 let sessionId = "ui-" + Math.random().toString(36).slice(2, 10);
+
+/* ── Ingest panel ── */
+
+ingestToggle.addEventListener("click", () => {
+  ingestPanel.classList.toggle("open");
+  if (ingestPanel.classList.contains("open")) ingestInput.focus();
+});
+
+ingestBtn.addEventListener("click", startIngest);
+ingestInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") startIngest();
+});
+
+async function startIngest() {
+  const source = ingestInput.value.trim();
+  if (!source) return;
+
+  ingestBtn.disabled = true;
+  ingestStatus.className = "";
+  ingestStatus.textContent = "Starting ingestion...";
+
+  try {
+    const res = await fetch("/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source }),
+    });
+    const data = await res.json();
+    pollIngestStatus(data.job_id);
+  } catch (e) {
+    ingestStatus.className = "error";
+    ingestStatus.textContent = "Error: " + e.message;
+    ingestBtn.disabled = false;
+  }
+}
+
+async function pollIngestStatus(jobId) {
+  const poll = async () => {
+    try {
+      const res = await fetch(`/ingest/status/${jobId}`);
+      const data = await res.json();
+
+      if (data.status === "running") {
+        ingestStatus.textContent = "Ingesting... (cloning, chunking, embedding — this may take a few minutes)";
+        setTimeout(poll, 3000);
+      } else if (data.status === "done") {
+        const r = data.result || {};
+        ingestStatus.className = "success";
+        ingestStatus.textContent = `Done! ${r.new_chunks || 0} chunks added, ${r.files_changed || 0} files changed.`;
+        ingestBtn.disabled = false;
+        ingestInput.value = "";
+        await loadProjects();
+      } else if (data.status === "error") {
+        ingestStatus.className = "error";
+        ingestStatus.textContent = "Error: " + (data.error || "unknown");
+        ingestBtn.disabled = false;
+      }
+    } catch (e) {
+      ingestStatus.className = "error";
+      ingestStatus.textContent = "Poll error: " + e.message;
+      ingestBtn.disabled = false;
+    }
+  };
+  poll();
+}
+
+/* ── Projects ── */
 
 async function loadProjects() {
   try {
     const res = await fetch("/projects");
     const data = await res.json();
+    const current = projectSel.value;
+    while (projectSel.options.length > 1) projectSel.remove(1);
     for (const name of Object.keys(data)) {
       const opt = document.createElement("option");
       opt.value = name;
       opt.textContent = name;
       projectSel.appendChild(opt);
     }
+    if (current) projectSel.value = current;
   } catch (e) {
     console.error("Failed to load projects:", e);
   }
 }
+
+/* ── Markdown rendering ── */
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function renderMarkdown(text) {
+  let html = escapeHtml(text);
+
+  // fenced code blocks
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    return `<pre><code>${code.replace(/\n$/, "")}</code></pre>`;
+  });
+
+  // inline code (but not inside <pre>)
+  html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+
+  // headings
+  html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+
+  // bold
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+  // italic (single * not preceded/followed by space in a word context)
+  html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+
+  // unordered lists: consecutive lines starting with * or -
+  html = html.replace(/(^|\n)([*\-] .+(?:\n[*\-] .+)*)/g, (_, pre, block) => {
+    const items = block.split("\n").map(line => {
+      return "<li>" + line.replace(/^[*\-] /, "") + "</li>";
+    }).join("");
+    return pre + "<ul>" + items + "</ul>";
+  });
+
+  // ordered lists: consecutive lines starting with N.
+  html = html.replace(/(^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (_, pre, block) => {
+    const items = block.split("\n").map(line => {
+      return "<li>" + line.replace(/^\d+\. /, "") + "</li>";
+    }).join("");
+    return pre + "<ol>" + items + "</ol>";
+  });
+
+  // paragraphs: double newlines
+  html = html.replace(/\n\n+/g, "</p><p>");
+  html = "<p>" + html + "</p>";
+
+  // single newlines to <br> (but not inside <pre>)
+  const parts = html.split(/(<pre>[\s\S]*?<\/pre>)/g);
+  for (let i = 0; i < parts.length; i++) {
+    if (!parts[i].startsWith("<pre>")) {
+      parts[i] = parts[i].replace(/\n/g, "<br>");
+    }
+  }
+  html = parts.join("");
+
+  // clean up empty paragraphs
+  html = html.replace(/<p>\s*<\/p>/g, "");
+  html = html.replace(/<p>\s*(<h[123]>)/g, "$1");
+  html = html.replace(/(<\/h[123]>)\s*<\/p>/g, "$1");
+  html = html.replace(/<p>\s*(<pre>)/g, "$1");
+  html = html.replace(/(<\/pre>)\s*<\/p>/g, "$1");
+  html = html.replace(/<p>\s*(<ul>)/g, "$1");
+  html = html.replace(/(<\/ul>)\s*<\/p>/g, "$1");
+  html = html.replace(/<p>\s*(<ol>)/g, "$1");
+  html = html.replace(/(<\/ol>)\s*<\/p>/g, "$1");
+
+  return html;
+}
+
+/* ── Chat messages ── */
 
 function addMessage(role, content) {
   const empty = chatArea.querySelector(".empty-state");
@@ -303,11 +563,12 @@ function parseStreamOutput(raw) {
 function renderAssistantMessage(div, raw) {
   const { answer, sources, nodeTrace, validationText } = parseStreamOutput(raw);
 
-  div.textContent = "";
+  div.innerHTML = "";
 
-  const answerSpan = document.createElement("span");
-  answerSpan.textContent = answer;
-  div.appendChild(answerSpan);
+  const answerDiv = document.createElement("div");
+  answerDiv.className = "answer-content";
+  answerDiv.innerHTML = renderMarkdown(answer);
+  div.appendChild(answerDiv);
 
   if (validationText) {
     const badge = document.createElement("div");
@@ -343,6 +604,8 @@ function renderAssistantMessage(div, raw) {
   }
 }
 
+/* ── Send message ── */
+
 async function sendMessage() {
   const text = input.value.trim();
   if (!text) return;
@@ -356,10 +619,7 @@ async function sendMessage() {
   const assistantDiv = addMessage("assistant", "");
   assistantDiv.innerHTML = '<span class="typing-indicator">Thinking...</span>';
 
-  const body = {
-    session_id: sessionId,
-    message: text,
-  };
+  const body = { session_id: sessionId, message: text };
   const proj = projectSel.value;
   if (proj) body.project_name = proj;
 
@@ -399,6 +659,8 @@ async function sendMessage() {
   sendBtn.disabled = false;
   input.focus();
 }
+
+/* ── Event listeners ── */
 
 sendBtn.addEventListener("click", sendMessage);
 
