@@ -1,0 +1,24 @@
+# --- Phase 1: local LLM chat ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+langchain==0.3.30
+langchain-ollama==0.3.9
+langchain-core==0.3.86
+python-dotenv==1.0.1
+httpx==0.28.1
+
+# --- Phase 2: RAG over an ingested repo (local folder or GitHub URL) ---
+# chromadb 1.x ships a precompiled Windows wheel (no C++ Build Tools needed,
+# unlike 0.5.x which requires building chroma-hnswlib from source on Windows).
+# langchain-chroma 0.2.4 is the version that bridges old langchain-core 0.3.x
+# (kept above, so Phase 1 stays untouched) with new chromadb 1.x.
+chromadb==1.5.9
+langchain-chroma==0.2.4
+langchain-text-splitters==0.3.11
+pathspec==0.12.1
+
+# --- Phase 3 (LangGraph orchestration + memory) will add ---
+# langgraph
+
+# --- Phase 4 (Guardrails AI) will add ---
+# guardrails-ai
