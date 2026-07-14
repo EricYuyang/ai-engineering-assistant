@@ -11,9 +11,11 @@ trace so the user can see what the graph did.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel
@@ -24,6 +26,9 @@ from app.manifest import load_projects
 from app.pipeline import IngestResult, ingest_repo
 
 app = FastAPI(title="AI Engineering Assistant", version="0.4.0")
+
+_static_dir = Path(__file__).resolve().parent.parent / "static"
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 _graph_builder = build_graph()
 
@@ -40,6 +45,11 @@ class IngestRequest(BaseModel):
     source: str
     project_name: str | None = None
     force: bool = False
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/static/index.html")
 
 
 @app.get("/health")
